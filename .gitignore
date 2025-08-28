@@ -1,3 +1,5 @@
 models
 .env
 *.csv
+__pycache__/
+*.pyc
