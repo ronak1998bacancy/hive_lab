@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import joblib
 import json
 import os
 import numpy as np
 import shap
-import matplotlib.pyplot as plt
 from pipeline_orchestrator import MLPipelineOrchestrator
 from chatbot import ChatbotHelper
 
@@ -435,32 +436,42 @@ with tab2:
             st.write("Feature Contributions to Prediction:")
             st.dataframe(shap_df)
             
-            # Create and display SHAP summary plot
-            st.write("SHAP Summary Plot:")
-            plt.figure(figsize=(10, 6))
-            plt.title(f"SHAP Values for {selected_model} Prediction")
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            shap_df = shap_df.sort_values('SHAP Value')
-            ax.barh(shap_df['Feature'], shap_df['SHAP Value'])
-            ax.set_xlabel('SHAP Value (Impact on Prediction)')
-            ax.set_title(f'Feature Impact on {selected_model} Prediction')
-            st.pyplot(fig)
+            # We'll skip this section as we'll create a better Plotly visualization below
             
             # Add visualization of SHAP values
             progress_text.text("Generating SHAP visualizations...")
             st.write("SHAP Feature Contributions:")
             
-            # Start with a simple horizontal bar chart that always works
-            fig, ax = plt.subplots(figsize=(10, 6))
+            # Create a Plotly horizontal bar chart showing feature contributions
             shap_df = shap_df.sort_values('SHAP Value')  # Sort for better visualization
-            ax.barh(shap_df['Feature'], shap_df['SHAP Value'])
-            ax.set_xlabel('SHAP Value (Impact on Prediction)')
-            ax.set_title('Feature Contribution to Prediction')
-            st.pyplot(fig)
-            plt.clf()
             
-            # Try to add a more detailed waterfall plot
+            # Create color scale based on SHAP values
+            colors = ['red' if x > 0 else 'blue' for x in shap_df['SHAP Value']]
+            
+            fig = go.Figure(go.Bar(
+                y=shap_df['Feature'],
+                x=shap_df['SHAP Value'],
+                orientation='h',
+                marker_color=colors
+            ))
+            
+            fig.update_layout(
+                title='Feature Contribution to Prediction',
+                xaxis_title='SHAP Value (Impact on Prediction)',
+                height=500,
+                width=700
+            )
+            
+            # Add a vertical line at x=0 to help visualize positive vs negative impact
+            fig.add_shape(
+                type="line",
+                x0=0, x1=0, y0=-0.5, y1=len(shap_df)-0.5,
+                line=dict(color="black", width=1, dash="dash")
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Try to create a detailed waterfall plot using Plotly
             try:
                 st.write("SHAP Waterfall Plot (Detailed Explanation):")
                 
@@ -481,37 +492,101 @@ with tab2:
                     else:
                         base_value = expected_val
                         
-                # Create SHAP Explanation object
-                explanation = shap.Explanation(
-                    values=shap_values[0], 
-                    base_values=base_value, 
-                    feature_names=feature_names,
-                    data=input_transformed_df.values[0]
+                # Sort features by SHAP value magnitude for waterfall
+                shap_df_sorted = shap_df.copy()
+                shap_df_sorted['Abs_Value'] = abs(shap_df_sorted['SHAP Value'])
+                shap_df_sorted = shap_df_sorted.sort_values('Abs_Value', ascending=False).head(10)
+                
+                # Create a Plotly waterfall chart
+                cumulative_values = [base_value]
+                y_values = ['Base Value']
+                text_values = [f"{base_value:.4f}"]
+                
+                # Add each feature contribution
+                for _, row in shap_df_sorted.iterrows():
+                    cumulative_values.append(row['SHAP Value'])
+                    y_values.append(row['Feature'])
+                    text_values.append(f"{row['SHAP Value']:.4f}")
+                
+                # Add final prediction
+                final_prediction = base_value + sum(shap_df_sorted['SHAP Value'])
+                cumulative_values.append(0)  # Placeholder, not used in waterfall
+                y_values.append('Final Prediction')
+                text_values.append(f"{final_prediction:.4f}")
+                
+                # Create measure and text arrays for the waterfall chart
+                measure = ['absolute'] + ['relative'] * len(shap_df_sorted) + ['total']
+                
+                # Create the waterfall chart
+                fig = go.Figure(go.Waterfall(
+                    name="SHAP Waterfall",
+                    orientation="v",
+                    measure=measure,
+                    y=y_values,
+                    x=cumulative_values,
+                    text=text_values,
+                    textposition="outside",
+                    connector={"line": {"color": "rgb(63, 63, 63)"}},
+                    decreasing={"marker": {"color": "blue"}},
+                    increasing={"marker": {"color": "red"}},
+                    totals={"marker": {"color": "green"}}
+                ))
+                
+                fig.update_layout(
+                    title=f"SHAP Value Contributions (Base: {base_value:.4f})",
+                    showlegend=False,
+                    height=600
                 )
                 
-                # Try to generate waterfall plot
-                plt.figure(figsize=(10, 8))
-                shap.plots.waterfall(explanation, show=False, max_display=10)
-                st.pyplot(plt.gcf())
-                plt.clf()
+                st.plotly_chart(fig, use_container_width=True)
                 progress_text.text("SHAP analysis complete!")
                 
             except Exception as e:
                 st.warning(f"Could not generate waterfall plot: {str(e)}")
                 
-                # Try a different visualization - summary plot
+                # Try a different visualization - summary plot with Plotly
                 try:
                     st.write("SHAP Summary Plot:")
-                    plt.figure(figsize=(10, 6))
-                    shap.summary_plot(
-                        shap_values,
-                        input_transformed_df,
-                        feature_names=feature_names,
-                        plot_type="bar",
-                        show=False
+                    
+                    # Calculate mean absolute SHAP value for each feature
+                    feature_importance = {}
+                    if isinstance(shap_values, np.ndarray):
+                        if len(shap_values.shape) == 2:
+                            # If we have a 2D array, take mean across rows
+                            mean_abs_shap = np.abs(shap_values).mean(axis=0)
+                            for i, name in enumerate(feature_names):
+                                feature_importance[name] = mean_abs_shap[i]
+                        else:
+                            # Otherwise just take absolute values of the array
+                            mean_abs_shap = np.abs(shap_values[0])
+                            for i, name in enumerate(feature_names):
+                                feature_importance[name] = mean_abs_shap[i]
+                    else:
+                        # For other formats, calculate from the DataFrame
+                        for feature in shap_df['Feature'].unique():
+                            feature_values = shap_df[shap_df['Feature'] == feature]['SHAP Value'].values
+                            feature_importance[feature] = np.abs(feature_values).mean()
+                    
+                    # Create a sorted list for the bar chart
+                    sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+                    features = [x[0] for x in sorted_features]
+                    importance_values = [x[1] for x in sorted_features]
+                    
+                    # Create Plotly bar chart for feature importance
+                    fig = go.Figure(go.Bar(
+                        y=features,
+                        x=importance_values,
+                        orientation='h',
+                        marker_color='#77B5FE'  # A blue color
+                    ))
+                    
+                    fig.update_layout(
+                        title='Mean |SHAP Value| (Feature Importance)',
+                        xaxis_title='Mean Absolute SHAP Value',
+                        height=500
                     )
-                    st.pyplot(plt.gcf())
-                    plt.clf()
+                    
+                    st.plotly_chart(fig, use_container_width=True)
                     progress_text.text("SHAP analysis complete!")
                 except Exception as e2:
                     st.warning(f"Could not generate summary plot either: {str(e2)}")
@@ -531,12 +606,25 @@ with tab2:
                     indices = np.argsort(importances)[::-1]
                     feature_names = transformed_columns
                     
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    ax.bar(range(len(indices)), importances[indices])
-                    ax.set_xticks(range(len(indices)))
-                    ax.set_xticklabels([feature_names[i] for i in indices], rotation=90)
-                    ax.set_title("Feature Importance")
-                    st.pyplot(fig)
+                    # Create Plotly bar chart for feature importance
+                    fig = go.Figure(go.Bar(
+                        x=[i for i in range(len(indices))],
+                        y=importances[indices],
+                        marker_color='forestgreen'
+                    ))
+                    
+                    fig.update_layout(
+                        title="Feature Importance",
+                        xaxis=dict(
+                            tickmode='array',
+                            tickvals=list(range(len(indices))),
+                            ticktext=[feature_names[i] for i in indices],
+                            tickangle=90
+                        ),
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
                     
                 elif hasattr(model, "coef_"):
                     # For linear models
@@ -545,10 +633,21 @@ with tab2:
                         coeffs = np.abs(coeffs).mean(axis=0)
                     feature_names = transformed_columns
                     
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    ax.bar(feature_names, np.abs(coeffs))
-                    ax.set_xticklabels(feature_names, rotation=90)
-                    ax.set_title("Feature Coefficients (Absolute Value)")
-                    st.pyplot(fig)
+                    # Create Plotly bar chart for coefficients
+                    fig = go.Figure(go.Bar(
+                        x=feature_names,
+                        y=np.abs(coeffs),
+                        marker_color='darkorange'
+                    ))
+                    
+                    fig.update_layout(
+                        title="Feature Coefficients (Absolute Value)",
+                        xaxis=dict(
+                            tickangle=90
+                        ),
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
             except Exception as fallback_error:
                 st.warning("Could not generate any feature importance visualization.")
