@@ -1,5 +1,5 @@
 joblib==1.5.1
-numpy==2.3.2
+numpy 
 pandas==2.3.2
 plotly==6.3.0
 protobuf==6.32.0
