@@ -1,0 +1,10 @@
+joblib==1.5.1
+numpy==2.3.2
+pandas==2.3.2
+plotly==6.3.0
+protobuf==6.32.0
+python-dotenv==1.1.1
+scikit_learn==1.7.1
+streamlit==1.48.1
+xgboost==3.0.4
+shap==0.48.0
