@@ -58,7 +58,9 @@ class MLPipelineOrchestrator:
         self.metadata = {
             'features': self.features,
             'categorical_cols': categorical_cols,
-            'categories': {col: list(self.data[col].unique()) for col in categorical_cols}
+            'categories': {col: list(self.data[col].unique()) for col in categorical_cols},
+            'target_column': self.target_column,
+            'task_type': self.task_type
         }
         with open('models/metadata.json', 'w') as f:
             json.dump(self.metadata, f)

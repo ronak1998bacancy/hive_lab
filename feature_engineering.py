@@ -8,7 +8,7 @@ from sklearn.preprocessing import FunctionTransformer
 from typing import Dict
 
 def log_transform(X):
-    return np.log1p(X)
+    return np.log1p(np.maximum(X, 0))
 
 def clip_outliers(X):
     Q1 = np.quantile(X, 0.25, axis=0)

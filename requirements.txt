@@ -1,3 +1,4 @@
+```pip-requirements
 joblib==1.5.1
 numpy 
 pandas==2.3.2
@@ -8,3 +9,4 @@ scikit_learn==1.7.1
 streamlit==1.48.1
 xgboost==3.0.4
 shap==0.48.0
+matplotlib==3.7.1
