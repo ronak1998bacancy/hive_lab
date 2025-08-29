@@ -21,7 +21,26 @@ with tab1:
     # File upload
     uploaded_file = st.file_uploader("Upload CSV or Excel file", type=['csv', 'xlsx', 'xls'], key="train_uploader")
 
+    # Track if a new file has been uploaded to reset session state
+    if 'current_file' not in st.session_state:
+        st.session_state['current_file'] = None
+    
     if uploaded_file:
+        # Check if this is a new file upload
+        current_file_name = getattr(uploaded_file, 'name', 'unknown')
+        
+        # Reset session state if a new file was uploaded
+        if st.session_state['current_file'] != current_file_name:
+            # Reset all dataset-specific session state variables
+            keys_to_reset = ['suggestions', 'target_column', 'drop_columns', 
+                           'encoding_methods', 'selected_models', 'previous_task_type']
+            for key in keys_to_reset:
+                if key in st.session_state:
+                    del st.session_state[key]
+            
+            # Update the current file
+            st.session_state['current_file'] = current_file_name
+        
         # Save temp file
         file_path = f"temp_{uploaded_file.name}"
         with open(file_path, "wb") as f:
@@ -47,12 +66,24 @@ with tab1:
             st.rerun()  # Force rerun to refresh the UI after reset
 
         # Step 1: Target and drops selection (before suggestions/encoding)
-        default_target = st.session_state.get('target_column', data.columns[0])
-        target_column = st.selectbox("Select target column", data.columns.tolist(), index=data.columns.tolist().index(default_target))
+        # Safely get default target column, ensuring it exists in current data
+        if 'target_column' in st.session_state and st.session_state['target_column'] in data.columns:
+            default_target = st.session_state['target_column']
+        else:
+            default_target = data.columns[0]
+            
+        target_column = st.selectbox("Select target column", data.columns.tolist(), 
+                                     index=data.columns.tolist().index(default_target))
         st.session_state['target_column'] = target_column
 
         available_cols_for_drop = [col for col in data.columns if col != target_column]
-        default_drops = st.session_state.get('drop_columns', [])
+        
+        # Safely get default drop columns, ensuring they exist in current data
+        if 'drop_columns' in st.session_state:
+            default_drops = [col for col in st.session_state['drop_columns'] if col in available_cols_for_drop]
+        else:
+            default_drops = []
+            
         drop_columns = st.multiselect("Select columns to drop", available_cols_for_drop, default=default_drops)
         st.session_state['drop_columns'] = drop_columns
 
@@ -77,13 +108,31 @@ with tab1:
         # Step 2: Encoding for remaining categorical columns
         remaining_data = data[remaining_cols + [target_column]]  # Simulate post-drop data for cat detection
         categorical_cols = remaining_data.select_dtypes(include=['object', 'category']).columns.tolist()
-        encoding_methods = {}
+        
+        # Initialize encoding_methods from session state if it exists
+        if 'encoding_methods' in st.session_state:
+            # Only keep methods for columns that exist in the current dataset
+            encoding_methods = {k: v for k, v in st.session_state['encoding_methods'].items() 
+                               if k in categorical_cols and k != target_column}
+        else:
+            encoding_methods = {}
+            
+        # Ask for encoding methods for each categorical column
         for col in categorical_cols:
             if col == target_column:
                 continue  # Skip encoding for target
-            method = st.selectbox(f"Encoding for {col}", ['onehot', 'label', 'none'])
+                
+            # Set default method based on saved preference if available
+            default_index = 0  # Default to 'onehot'
+            if col in encoding_methods:
+                methods = ['onehot', 'label', 'none']
+                if encoding_methods[col] in methods:
+                    default_index = methods.index(encoding_methods[col])
+                    
+            method = st.selectbox(f"Encoding for {col}", ['onehot', 'label', 'none'], index=default_index)
             if method != 'none':
                 encoding_methods[col] = method
+                
         st.session_state['encoding_methods'] = encoding_methods
 
         # Model selection
