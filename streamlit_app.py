@@ -277,8 +277,8 @@ with tab2:
             """)
         
         # Calculate SHAP values
+        # Create placeholder for progress updates
         progress_text = st.empty()
-        progress_text.text("Calculating SHAP values... Please wait.")
         
         # Determine the task type from metadata or available models
         task_type = None
@@ -353,8 +353,9 @@ with tab2:
             bg_transformed_df = input_transformed_df
         
         try:
-            # Create SHAP explainer based on model type
-            st.info("Calculating SHAP values... This might take a moment.")
+            # Create a status container for SHAP calculation status
+            status_container = st.empty()
+            status_container.info("Calculating SHAP values... This might take a moment.")
             
             # We'll try different explainers in order of preference based on model type
             explainer = None
@@ -418,8 +419,12 @@ with tab2:
                     st.error(f"Failed to calculate SHAP values: {str(e2)}")
                     raise Exception("Could not calculate SHAP values")
             
-            # Clear progress indicator and update status
-            progress_text.text("SHAP values calculated successfully!")
+            # Clear status messages
+            status_container.empty()
+            progress_text.empty()
+            
+            # Add success message
+            st.success("SHAP values calculated successfully!")
             
             # Create a DataFrame to display the feature contributions
             feature_names = transformed_columns
@@ -432,25 +437,124 @@ with tab2:
             shap_df['Abs SHAP'] = shap_df['SHAP Value'].abs()
             shap_df = shap_df.sort_values('Abs SHAP', ascending=False).drop('Abs SHAP', axis=1)
             
-            # Display SHAP values table
+            # Clean up feature names for display
+            def clean_feature_name(name):
+                # Handle one-hot encoded features with different prefixes
+                onehot_prefixes = ['onehot_auto__', 'onehot_user__', 'onehot__']
+                
+                for prefix in onehot_prefixes:
+                    if name.startswith(prefix):
+                        parts = name.split('__')
+                        if len(parts) > 1:
+                            # Extract feature and value, handling cases where value might contain underscores
+                            feature_value_part = parts[1]
+                            
+                            # Handle special case for 'formerly smoked', 'never smoked', etc.
+                            if 'smoking_status' in feature_value_part:
+                                if 'formerly smoked' in feature_value_part:
+                                    feature = 'smoking_status'
+                                    value = 'formerly smoked'
+                                elif 'never smoked' in feature_value_part:
+                                    feature = 'smoking_status'
+                                    value = 'never smoked'
+                                else:
+                                    # Normal processing for other smoking statuses
+                                    feature_and_value = feature_value_part.split('_')
+                                    feature = '_'.join(feature_and_value[:-1])
+                                    value = feature_and_value[-1]
+                            else:
+                                # Normal case - split at the last underscore
+                                last_underscore = feature_value_part.rfind('_')
+                                if last_underscore > 0:
+                                    feature = feature_value_part[:last_underscore]
+                                    value = feature_value_part[last_underscore+1:]
+                                else:
+                                    # Fallback if no underscore found
+                                    feature = feature_value_part
+                                    value = "Unknown"
+                            
+                            # Check if this is the selected value for this feature
+                            if feature in input_data:
+                                # Convert both to string for comparison and handle special cases
+                                input_value = str(input_data[feature])
+                                if input_value.lower() == value.lower():
+                                    return feature  # Return just the feature name without the value
+                                else:
+                                    return None  # Not the selected value, skip it
+                            
+                            # If we can't determine if it's selected, just show the feature name
+                            return feature
+                
+                # Handle numeric features with different prefixes
+                num_prefixes = ['num__', 'num_']
+                for prefix in num_prefixes:
+                    if name.startswith(prefix):
+                        feature = name.replace(prefix, '')
+                        return feature
+                
+                # For boolean features
+                if name.startswith('bool__'):
+                    feature = name.replace('bool__', '')
+                    return feature
+                
+                # For any other feature
+                return name
+
+            # Create a dictionary to track and combine contributions for each feature
+            feature_contributions = {}
+            feature_mapping = {}  # To store original to cleaned name mapping
+            
+            # First pass: clean names and track which features to include
+            for _, row in shap_df.iterrows():
+                original_name = row['Feature']
+                clean_name = clean_feature_name(original_name)
+                
+                if clean_name is not None:  # Skip None values (unselected categorical values)
+                    # Track mapping from original to cleaned names
+                    feature_mapping[original_name] = clean_name
+                    
+                    # Initialize or update the contribution for this feature
+                    if clean_name not in feature_contributions:
+                        feature_contributions[clean_name] = row['SHAP Value']
+                    else:
+                        # For one-hot encoded features, we might need to combine contributions
+                        # This happens when we have multiple columns for one feature
+                        feature_contributions[clean_name] += row['SHAP Value']
+            
+            # Second pass: create filtered dataframe with combined values
+            filtered_rows = []
+            for feature, value in feature_contributions.items():
+                filtered_rows.append({
+                    'Feature': feature,
+                    'SHAP Value': value
+                })
+
+            # Create new filtered dataframe
+            filtered_shap_df = pd.DataFrame(filtered_rows)
+            
+            # Sort by absolute SHAP value to show most important features at top
+            filtered_shap_df['Abs_SHAP'] = filtered_shap_df['SHAP Value'].abs()
+            filtered_shap_df = filtered_shap_df.sort_values('Abs_SHAP', ascending=False)
+            filtered_shap_df = filtered_shap_df.drop('Abs_SHAP', axis=1)
+            
+            # Display SHAP values table with clean feature names
             st.write("Feature Contributions to Prediction:")
-            st.dataframe(shap_df)
+            st.dataframe(filtered_shap_df)
             
             # We'll skip this section as we'll create a better Plotly visualization below
             
             # Add visualization of SHAP values
-            progress_text.text("Generating SHAP visualizations...")
             st.write("SHAP Feature Contributions:")
             
             # Create a Plotly horizontal bar chart showing feature contributions
-            shap_df = shap_df.sort_values('SHAP Value')  # Sort for better visualization
+            filtered_shap_df = filtered_shap_df.sort_values('SHAP Value')  # Sort for better visualization
             
             # Create color scale based on SHAP values
-            colors = ['red' if x > 0 else 'blue' for x in shap_df['SHAP Value']]
+            colors = ['red' if x > 0 else 'blue' for x in filtered_shap_df['SHAP Value']]
             
             fig = go.Figure(go.Bar(
-                y=shap_df['Feature'],
-                x=shap_df['SHAP Value'],
+                y=filtered_shap_df['Feature'],
+                x=filtered_shap_df['SHAP Value'],
                 orientation='h',
                 marker_color=colors
             ))
@@ -458,6 +562,7 @@ with tab2:
             fig.update_layout(
                 title='Feature Contribution to Prediction',
                 xaxis_title='SHAP Value (Impact on Prediction)',
+                yaxis_title='Feature',
                 height=500,
                 width=700
             )
@@ -465,135 +570,19 @@ with tab2:
             # Add a vertical line at x=0 to help visualize positive vs negative impact
             fig.add_shape(
                 type="line",
-                x0=0, x1=0, y0=-0.5, y1=len(shap_df)-0.5,
+                x0=0, x1=0, y0=-0.5, y1=len(filtered_shap_df)-0.5,
                 line=dict(color="black", width=1, dash="dash")
             )
             
             st.plotly_chart(fig, use_container_width=True)
-            
-            # Try to create a detailed waterfall plot using Plotly
-            try:
-                st.write("SHAP Waterfall Plot (Detailed Explanation):")
-                
-                # Get the base value (expected value)
-                base_value = 0  # Default
-                if hasattr(explainer, 'expected_value'):
-                    expected_val = explainer.expected_value
-                    # Handle different expected_value types
-                    if isinstance(expected_val, np.ndarray):
-                        if task_type == 'classification':
-                            pred_class = int(prediction[0])
-                            if pred_class < len(expected_val) and pred_class >= 0:
-                                base_value = expected_val[pred_class]
-                            else:
-                                base_value = expected_val[0]
-                        else:
-                            base_value = expected_val[0]
-                    else:
-                        base_value = expected_val
-                        
-                # Sort features by SHAP value magnitude for waterfall
-                shap_df_sorted = shap_df.copy()
-                shap_df_sorted['Abs_Value'] = abs(shap_df_sorted['SHAP Value'])
-                shap_df_sorted = shap_df_sorted.sort_values('Abs_Value', ascending=False).head(10)
-                
-                # Create a Plotly waterfall chart
-                cumulative_values = [base_value]
-                y_values = ['Base Value']
-                text_values = [f"{base_value:.4f}"]
-                
-                # Add each feature contribution
-                for _, row in shap_df_sorted.iterrows():
-                    cumulative_values.append(row['SHAP Value'])
-                    y_values.append(row['Feature'])
-                    text_values.append(f"{row['SHAP Value']:.4f}")
-                
-                # Add final prediction
-                final_prediction = base_value + sum(shap_df_sorted['SHAP Value'])
-                cumulative_values.append(0)  # Placeholder, not used in waterfall
-                y_values.append('Final Prediction')
-                text_values.append(f"{final_prediction:.4f}")
-                
-                # Create measure and text arrays for the waterfall chart
-                measure = ['absolute'] + ['relative'] * len(shap_df_sorted) + ['total']
-                
-                # Create the waterfall chart
-                fig = go.Figure(go.Waterfall(
-                    name="SHAP Waterfall",
-                    orientation="v",
-                    measure=measure,
-                    y=y_values,
-                    x=cumulative_values,
-                    text=text_values,
-                    textposition="outside",
-                    connector={"line": {"color": "rgb(63, 63, 63)"}},
-                    decreasing={"marker": {"color": "blue"}},
-                    increasing={"marker": {"color": "red"}},
-                    totals={"marker": {"color": "green"}}
-                ))
-                
-                fig.update_layout(
-                    title=f"SHAP Value Contributions (Base: {base_value:.4f})",
-                    showlegend=False,
-                    height=600
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                progress_text.text("SHAP analysis complete!")
-                
-            except Exception as e:
-                st.warning(f"Could not generate waterfall plot: {str(e)}")
-                
-                # Try a different visualization - summary plot with Plotly
-                try:
-                    st.write("SHAP Summary Plot:")
-                    
-                    # Calculate mean absolute SHAP value for each feature
-                    feature_importance = {}
-                    if isinstance(shap_values, np.ndarray):
-                        if len(shap_values.shape) == 2:
-                            # If we have a 2D array, take mean across rows
-                            mean_abs_shap = np.abs(shap_values).mean(axis=0)
-                            for i, name in enumerate(feature_names):
-                                feature_importance[name] = mean_abs_shap[i]
-                        else:
-                            # Otherwise just take absolute values of the array
-                            mean_abs_shap = np.abs(shap_values[0])
-                            for i, name in enumerate(feature_names):
-                                feature_importance[name] = mean_abs_shap[i]
-                    else:
-                        # For other formats, calculate from the DataFrame
-                        for feature in shap_df['Feature'].unique():
-                            feature_values = shap_df[shap_df['Feature'] == feature]['SHAP Value'].values
-                            feature_importance[feature] = np.abs(feature_values).mean()
-                    
-                    # Create a sorted list for the bar chart
-                    sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
-                    features = [x[0] for x in sorted_features]
-                    importance_values = [x[1] for x in sorted_features]
-                    
-                    # Create Plotly bar chart for feature importance
-                    fig = go.Figure(go.Bar(
-                        y=features,
-                        x=importance_values,
-                        orientation='h',
-                        marker_color='#77B5FE'  # A blue color
-                    ))
-                    
-                    fig.update_layout(
-                        title='Mean |SHAP Value| (Feature Importance)',
-                        xaxis_title='Mean Absolute SHAP Value',
-                        height=500
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    progress_text.text("SHAP analysis complete!")
-                except Exception as e2:
-                    st.warning(f"Could not generate summary plot either: {str(e2)}")
-                    st.info("Using only the simple bar chart shown above.")
-                    progress_text.text("SHAP analysis completed with limited visualizations.")
-            
+        
         except Exception as e:
+            # Clear any status indicators
+            if 'status_container' in locals():
+                status_container.empty()
+            if 'progress_text' in locals():
+                progress_text.empty()
+                
             st.error(f"Could not generate SHAP values: {str(e)}")
             st.info("SHAP values calculation might not be supported for this model type or configuration.")
             
