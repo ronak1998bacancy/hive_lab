@@ -162,6 +162,21 @@ with tab1:
             )
             results = orchestrator.run_pipeline()
             
+            # Save the list of selected models in metadata
+            metadata_path = 'models/metadata.json'
+            try:
+                if os.path.exists(metadata_path):
+                    with open(metadata_path, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    # Add selected models to metadata
+                    metadata['selected_models'] = selected_models
+                    
+                    with open(metadata_path, 'w') as f:
+                        json.dump(metadata, f)
+            except Exception as e:
+                st.warning(f"Could not update metadata with selected models: {str(e)}")
+            
             # Save a copy of the processed data for SHAP analysis later
             try:
                 # Save a sample of the processed data (to avoid large files)
@@ -239,9 +254,22 @@ with tab2:
         st.warning("Metadata file not found or empty. Run the pipeline first in the Train tab to generate files.")
         st.stop()
 
-    # List available models
+    # List available models (only those that were selected in training)
     model_dir = 'models/'
-    available_models = [f.replace('.joblib', '') for f in os.listdir(model_dir) if f.endswith('.joblib') and f != 'preprocessor.joblib']
+    
+    # Get list of all model files in the directory
+    all_model_files = [f.replace('.joblib', '') for f in os.listdir(model_dir) 
+                     if f.endswith('.joblib') and f != 'preprocessor.joblib']
+    
+    # Filter by selected models from metadata if available
+    if 'selected_models' in metadata:
+        # Only show models that were explicitly selected during training
+        available_models = [model for model in all_model_files 
+                          if model in metadata['selected_models']]
+    else:
+        # Fallback to showing all models if metadata doesn't have selection info
+        available_models = all_model_files
+    
     if not available_models:
         st.warning("No models found. Train and save models first in the Train tab.")
         st.stop()
