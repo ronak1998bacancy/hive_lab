@@ -14,7 +14,7 @@ class ChatbotHelper:
     """
     def __init__(self, data: pd.DataFrame, task_type: str = 'regression'):
         self.data = data  # Use full data passed
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        genai.configure(api_key="AIzaSyCHff3mjuk4ypNtrzDPxccKvlrVDdbER9g")
         self.model = genai.GenerativeModel('gemini-1.5-flash')  # Adjusted to valid model; change if needed
         self.task_type = task_type
         self.precomputed_suggestions = None  # To store precomputed results
@@ -69,3 +69,7 @@ class ChatbotHelper:
         data_sample = self._get_data_sample_text()
         prompt = DYNAMIC_PROMPT.format(user_query=user_query, data_sample=data_sample)
         return self._query_llm(prompt)
+    
+
+
+# docker run -p 8501:8501 ml-streamlit-app
