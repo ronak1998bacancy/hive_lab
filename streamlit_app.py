@@ -439,40 +439,103 @@ with tab2:
             
             # Clean up feature names for display
             def clean_feature_name(name):
-                # Handle one-hot encoded features
-                if name.startswith('onehot_auto__'):
-                    parts = name.split('__')
-                    if len(parts) > 1:
-                        feature_and_value = parts[1].split('_')
-                        if len(feature_and_value) > 1:
-                            feature = '_'.join(feature_and_value[:-1])
-                            value = feature_and_value[-1]
-                            # Only keep the feature value that matches the input
-                            if feature in input_data and str(input_data[feature]) == value:
-                                return f"{feature} = {value}"
-                            elif feature in input_data and str(input_data[feature]) != value:
-                                return None  # Skip this feature value as it wasn't selected
-                            return f"{feature} = {value}"
+                # Handle one-hot encoded features with different prefixes
+                onehot_prefixes = ['onehot_auto__', 'onehot_user__', 'onehot__']
                 
-                # Handle numeric features
-                if name.startswith('num__'):
-                    feature = name.replace('num__', '')
+                for prefix in onehot_prefixes:
+                    if name.startswith(prefix):
+                        parts = name.split('__')
+                        if len(parts) > 1:
+                            # Extract feature and value, handling cases where value might contain underscores
+                            feature_value_part = parts[1]
+                            
+                            # Handle special case for 'formerly smoked', 'never smoked', etc.
+                            if 'smoking_status' in feature_value_part:
+                                if 'formerly smoked' in feature_value_part:
+                                    feature = 'smoking_status'
+                                    value = 'formerly smoked'
+                                elif 'never smoked' in feature_value_part:
+                                    feature = 'smoking_status'
+                                    value = 'never smoked'
+                                else:
+                                    # Normal processing for other smoking statuses
+                                    feature_and_value = feature_value_part.split('_')
+                                    feature = '_'.join(feature_and_value[:-1])
+                                    value = feature_and_value[-1]
+                            else:
+                                # Normal case - split at the last underscore
+                                last_underscore = feature_value_part.rfind('_')
+                                if last_underscore > 0:
+                                    feature = feature_value_part[:last_underscore]
+                                    value = feature_value_part[last_underscore+1:]
+                                else:
+                                    # Fallback if no underscore found
+                                    feature = feature_value_part
+                                    value = "Unknown"
+                            
+                            # Check if this is the selected value for this feature
+                            if feature in input_data:
+                                # Convert both to string for comparison and handle special cases
+                                input_value = str(input_data[feature])
+                                if input_value.lower() == value.lower():
+                                    return feature  # Return just the feature name without the value
+                                else:
+                                    return None  # Not the selected value, skip it
+                            
+                            # If we can't determine if it's selected, just show the feature name
+                            return feature
+                
+                # Handle numeric features with different prefixes
+                num_prefixes = ['num__', 'num_']
+                for prefix in num_prefixes:
+                    if name.startswith(prefix):
+                        feature = name.replace(prefix, '')
+                        return feature
+                
+                # For boolean features
+                if name.startswith('bool__'):
+                    feature = name.replace('bool__', '')
                     return feature
-
+                
+                # For any other feature
                 return name
 
-            # Clean up and filter the dataframe
-            filtered_rows = []
+            # Create a dictionary to track and combine contributions for each feature
+            feature_contributions = {}
+            feature_mapping = {}  # To store original to cleaned name mapping
+            
+            # First pass: clean names and track which features to include
             for _, row in shap_df.iterrows():
-                clean_name = clean_feature_name(row['Feature'])
+                original_name = row['Feature']
+                clean_name = clean_feature_name(original_name)
+                
                 if clean_name is not None:  # Skip None values (unselected categorical values)
-                    filtered_rows.append({
-                        'Feature': clean_name,
-                        'SHAP Value': row['SHAP Value']
-                    })
+                    # Track mapping from original to cleaned names
+                    feature_mapping[original_name] = clean_name
+                    
+                    # Initialize or update the contribution for this feature
+                    if clean_name not in feature_contributions:
+                        feature_contributions[clean_name] = row['SHAP Value']
+                    else:
+                        # For one-hot encoded features, we might need to combine contributions
+                        # This happens when we have multiple columns for one feature
+                        feature_contributions[clean_name] += row['SHAP Value']
+            
+            # Second pass: create filtered dataframe with combined values
+            filtered_rows = []
+            for feature, value in feature_contributions.items():
+                filtered_rows.append({
+                    'Feature': feature,
+                    'SHAP Value': value
+                })
 
             # Create new filtered dataframe
             filtered_shap_df = pd.DataFrame(filtered_rows)
+            
+            # Sort by absolute SHAP value to show most important features at top
+            filtered_shap_df['Abs_SHAP'] = filtered_shap_df['SHAP Value'].abs()
+            filtered_shap_df = filtered_shap_df.sort_values('Abs_SHAP', ascending=False)
+            filtered_shap_df = filtered_shap_df.drop('Abs_SHAP', axis=1)
             
             # Display SHAP values table with clean feature names
             st.write("Feature Contributions to Prediction:")
@@ -499,6 +562,7 @@ with tab2:
             fig.update_layout(
                 title='Feature Contribution to Prediction',
                 xaxis_title='SHAP Value (Impact on Prediction)',
+                yaxis_title='Feature',
                 height=500,
                 width=700
             )
